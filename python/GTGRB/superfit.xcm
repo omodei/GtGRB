@@ -1,0 +1,431 @@
+#This is a fitting recipe based upon my experience
+
+proc isnan { x } {
+    if { ! ([string is double $x]) || $x != $x } { return 1} else { return 0}
+    }
+
+proc checkErrorsForNan {args} {
+      set fitOk 1
+      #puts "Check for NaNs BEGIN"
+      #Check for Nan in the covariance matrix (this would crash Xspec)      
+      
+      for {set thisPar 1} {$thisPar <= [tcloutr modpar]} {incr thisPar} {
+        scan [tcloutr par $thisPar] "%g" thisParValue
+        set thisSigma [tcloutr sigma $thisPar]
+        #puts "isNan? $thisParValue $thisSigma"
+        if { [isnan $thisSigma] } {
+          #puts "We have NaNs!!!"
+          set fitOk 0
+          break
+        }
+      }
+      #puts "Check for NaNs END with fitOk = $fitOk"
+      tclflush stdout
+      return $fitOk
+}
+
+proc checkErrorsForTooLarge {args} {
+      set fitNotOk 0
+      #puts "Check for tooLarge BEGIN"
+      #Check if there is a parameter with an error larger than its value (sign of a problem in the
+      #covariance matrix which would stuck Xspec)   
+      
+      set parOfInterest [lindex $args 0]
+      set parName [lindex $args 1]
+      scan [tcloutr par $parOfInterest] "%g" thisParValue
+      set thisSigma [tcloutr sigma $parOfInterest]
+      
+      set threshold 10.0
+      if { $parName=="norm" } {
+        set threshold 1.0
+      }
+      
+      if { [checkErrorsForNan]} {
+        #We don't have NaNs, check if we have too large error bars
+        if { [expr abs($thisSigma/$thisParValue)]>=$threshold } {
+          #yes, the fit is bad
+          puts "Parameter number $parOfInterest seems to be unconstrained, probably there are too many parameters!"
+          set fitNotOk 1
+          }
+      } else {
+         #we have NaNs in the covariance matrix, the fit is bad
+         puts "Found NaNs in the covariance matrix, the fit did not converge!"
+         set fitNotOk 1
+      }
+      
+      tclflush stdout
+      return $fitNotOk
+}
+
+#This return true if the fit is ok, false otherwise
+proc performFit {args} {            
+      set fitNotOk [catch { fit 100000 0.01} errVal]
+      if {$fitNotOk == 1} { 
+        set fitOk 0
+        puts "\n\nError in the fit!!\n\n" 
+        tclflush stdout
+      } else {
+        #puts -nonewline "."
+        #tclflush stdout
+        set fitOk  [ checkErrorsForNan ]
+      }
+      #puts "performFit: fitOk is $fitOk"      
+      return $fitOk
+}
+
+proc applyStatistics {args} {    
+    set statistics [split [lindex $args 0] ","]
+    
+    if {[llength $statistics]==1} {
+      statistic [lindex $statistics 0]
+    } else {        
+      for {set dataset 1} {$dataset <= [llength $statistics]} {incr dataset} {
+        set thisStat [lindex $statistics [expr ${dataset}-1]]
+        statistic $thisStat $dataset
+      }
+    }  
+}
+
+proc fitChain {args} {
+    
+    set statistics [lindex $args 0]
+    
+    set method1 leven
+    set method2 leven
+    set method3 migrad
+    #Don't change this!
+    set method4 leven 
+
+    #Save the initial status, to be used if the fit fails
+    statistic chi
+    weight churazov
+    set renormNotOk [catch { renorm} errVal]
+    if { $renormNotOk  } {
+      puts puts "Could not renorm!" 
+    }
+    file delete _superfitInitModel.xcm
+    save all _superfitInitModel.xcm        
+    
+    file delete mn_output.log
+    
+    #puts "Fitting a model:"
+    #puts ""
+    set fitOk 1
+    
+    #Prefit
+    statistic chi
+    weight churazov
+    set renormNotOk [catch { renorm} errVal]
+    if { $renormNotOk  } {
+      puts "Could not renorm!" 
+    } 
+    #weight standard
+    
+    #puts "Stage 1"
+    #puts "-----------------------"
+    #applyStatistics $statistics
+    method $method1      
+    set fitNotOk [catch { fit 100000} errVal]
+    if { ($fitNotOk)  } {
+      set fitOk 0
+      puts "Pre-fit failed!" 
+    } else {
+      #puts -nonewline "*"
+      tclflush stdout
+    }
+    
+    #puts "\n\nStage 2"
+    #puts "-----------------------"
+    weight standard
+    applyStatistics $statistics    
+    method $method2
+    set prevStat 1000000
+    for {set i 1} {$i < 50} {incr i} { 
+      if { ! ($fitOk) } {
+        #previous fit failed. Try to restart from the beginning
+        @_superfitInitModel.xcm
+        set renormNotOk [catch { renorm} errVal]
+        if { $renormNotOk  } {
+          puts puts "Could not renorm!" 
+        }
+        applyStatistics $statistics
+      }
+      set fitOk [performFit]      
+      if { ! ($fitOk) } {
+         puts "Unable to fit with statistics $statistics and $method1"
+         @_superfitInitModel.xcm
+         break 
+      }
+      set curStat [tcloutr stat]
+      #if { [expr $prevStat - $curStat] <= 0.01 } { 
+      #    #No improvement, we can break
+      #    break;
+      #}
+      set prevStat $curStat
+    }
+    
+    #puts "\n\nStage 3"
+    #puts "-----------------------"
+    method $method3
+    set prevStat 1000000
+    if { ! ($fitOk) } {
+      puts "Impossible to begin stage 3 starting from an invalid fit"
+    } else {            
+      for {set i 1} {$i < 50} {incr i} { 
+        set fitOk [performFit]        
+        if { ! ($fitOk) } {
+           puts "Unable to fit with statistic $statistics and $method3"
+           @_superfitInitModel.xcm
+           set fitOk 0
+           break 
+        }
+        set curStat [tcloutr stat]
+        if { [expr $prevStat - $curStat] <= 0.01 } { 
+          #No improvement, we can break
+          break;
+        }
+        set prevStat $curStat
+      }
+    }    
+    
+    #puts "\n\nStage 4"
+    #puts "-----------------------"
+    method $method4
+    set prevStat 1000000
+    if { ! ($fitOk) } {
+      puts "Impossible to begin stage 4 starting from an invalid fit"
+    } else {        
+      for {set i 1} {$i < 50} {incr i} { 
+        set fitOk [performFit]        
+        if { ! ($fitOk) } {
+           puts "Unable to fit with statistic $statistics and $method4" 
+           @_superfitInitModel.xcm
+           break
+        }
+        set curStat [tcloutr stat]
+        if { [expr $prevStat - $curStat] <= 0.01 } { 
+          #No improvement, we can break
+          break;
+        }
+        set prevStat $curStat
+      }   
+    }
+    #puts "\n"
+    return $fitOk
+}
+
+proc computeErrors {args} {
+    set hiChatter [lindex $args 0]
+    chatter 0
+    #Now compute the errors, if we have a valid fit
+    set reLoop 1
+    set migrad 1
+    set maxLoops 30
+    set reDo 0
+    #Loop until no new minimum are found by the error command
+    while {$reLoop < $maxLoops} {      
+      for {set thisPar 1} {$thisPar <= [tcloutr modpar]} {incr thisPar} {
+        set nRead [scan [tcloutr pinfo $thisPar] "%s %s" parName parUnit]
+        scan [tcloutr par $thisPar] "%g %g" parValue parInitialSigma
+        scan [tcloutr sigma $thisPar] "%g" parSigma
+        scan [tcloutr plink $thisPar] "%s" isLinked
+        if {$parInitialSigma>0 && $parSigma<=0 && $isLinked!="T"} {
+          #Parameter has been fixed by the fit procedure, 
+          #thus we have an error in the fit
+          puts "Error procedure failed. Parameter $parName has been fixed by the fitting algorithm"
+          file delete _superfitInitModel.xcm
+          chatter $hiChatter
+          return -1
+        }
+        if {$parSigma > 0} {
+          #Check that the covariance matrix diagonal is not too large for this parameter
+          #(if yes, there has been a problem in the fit)
+          if {[checkErrorsForTooLarge $thisPar $parName]==1} {
+            puts "Diagonal value in the cov. matrix for parameter $parName is too large, problem in the fit"
+            file delete _superfitInitModel.xcm
+            chatter $hiChatter
+            return -1 
+          }
+          
+          puts "Computing error for parameter $parName ..."
+          set statValue [tcloutr stat]
+          set accuracy 0.01
+          if { [catch { error stop 100 $accuracy 1.0 $thisPar } errVal]  } { 
+             set parErrorM 0
+             set parErrorP 0
+             puts "Cannot compute error for parameter $thisPar"
+             file delete _superfitInitModel.xcm
+             chatter $hiChatter
+             return -1
+           } else {                          
+             #Check if the best fit for this parameter has changed
+             #(it can happen if the error function found a new minimum)
+             scan [tcloutr par $thisPar] "%g" newParValue
+             scan [tcloutr error $thisPar] "%g %g %s" minValue maxValue errorString
+             set newStatValue [tcloutr stat]
+             
+             #Check if the error procedures has found problems (like "parameters pegged" and similar)
+             #The error string is a string like XXXXXXXXXX, where each "X" represents an error condition
+             #and can be T (true) or F (false). The first index set to T means the error procedure found
+             #a new minimum, so we will redo the fit. The second index to T means there is an apparent
+             #non-monocity in the statistic space (which usually is not a problem), all the others are
+             #real errors, which usually happen when the parameter is unconstrained
+             if {    [string index $errorString 3] == "T" || [string index $errorString 4] == "T" 
+                  || [string index $errorString 5] == "T" || [string index $errorString 8] == "T"} {
+                  
+                  puts "Error procedure failed. Parameter is unconstrained or other problems"
+                  file delete _superfitInitModel.xcm
+                  chatter $hiChatter
+                  return -1
+                  }
+             if {[expr abs($parValue)]>1E-4} { 
+               set comparation [expr abs(abs($newParValue-$parValue)/abs($parValue))]
+             } else {
+               set comparation 0.0
+             }
+             if { [string index $errorString 0] == "T" || $comparation > 0.005} {
+               puts "New minimum found"
+               puts "   New value: $newParValue ($newStatValue), old: $parValue ($statValue)"
+               puts "   Restart error computation..."
+               set reDo 1               
+               break
+             } else {
+               set reDo 0
+             }
+             set parErrorM [expr $minValue - $parValue]
+             set parErrorP [expr $maxValue - $parValue]
+           }
+           if {$nRead > 1} { 
+            puts "$parName = $parValue $parErrorM +$parErrorP ($parUnit)" 
+          }
+        
+          if {$nRead ==1} { 
+            puts "$parName = $parValue $parErrorM +$parErrorP"
+          }
+        } else {
+          set parErrorM 0
+          set parErrorP 0
+        }
+        
+      }
+      if {$reDo==1} { 
+        #A new minimum has been found, redo the whole loop over the parameters
+        set reLoop [expr $reLoop +1] 
+      } else {
+        #Error search was ok, exit the while loop
+        break
+      }
+    }
+    chatter $hiChatter  
+    return 1
+}
+
+proc superFit {args} {
+  set xs_echo_script 0
+  set lowChatter 0
+  set hiChatter 10
+  set oldChatter [tcloutr chatter]
+  chatter $lowChatter
+  set oldQuery [tcloutr query]
+  query yes
+  
+  set nDatasets [tcloutr datasets]
+  
+  set statistics [lindex $args 0]
+  set computeErrors [lindex $args 1]
+  set modelexpr [lindex $args 2]
+  set initStrings [lindex $args 3]
+  
+  if {[llength $args]>4} {
+    set constString [lindex $args 4]
+  } else {
+    set constString "none"
+  }
+  
+  if {$nDatasets > 0 } {
+      
+    set statValues [list]
+    set fitStatus  [list]
+
+    foreach initString $initStrings {
+      puts -nonewline "*"
+      tclflush stdout
+      #Init the model
+      model $modelexpr $initString
+      
+      if {$constString!="none"} {
+        addcomp 1 cons $constString
+      }
+          
+      set fitOk [fitChain $statistics]
+      
+      #chatter $hiChatter
+      #show parameters
+      #show fit
+      #chatter $lowChatter 
+    
+      set curStat [tcloutr stat]
+      lappend statValues $curStat
+      lappend fitStatus $fitOk                  
+    } 
+    #End of loop on different init expressions
+    
+    #Get the best fit
+    set minimum 1000000
+    set fitOk 0
+    set bestInitString ""
+    foreach val $statValues status $fitStatus initExpr $initStrings {
+      if { $val < $minimum } {
+        set minimum $val
+        set fitOk $status
+        set bestInitString $initExpr
+      }
+    }        
+    
+    #If we don't have a valid fit, exit
+    if { ! $fitOk } {
+        puts "We don't have a valid fit, exiting."
+        file delete _superfitInitModel.xcm
+        chatter $hiChatter
+        query $oldQuery
+        return -1
+    }
+    
+    #Regenerate the best fit
+    puts "\n\nBest init parameter set selected. Refitting...\n"
+    model $modelexpr $bestInitString
+    if {$constString!="none"} {
+        addcomp 1 cons $constString
+    }
+    set fitOk [fitChain $statistics]
+    if { ! $fitOk } {
+        puts "Something went wrong while regenerating the best fit, which previously was good. WTF?"
+        file delete _superfitInitModel.xcm
+        chatter $hiChatter
+        query $oldQuery
+        return -1
+    }
+    puts "\n\nPutative best values:\n"
+    chatter $hiChatter
+    show parameters
+    show fit
+    chatter $lowChatter 
+        
+    if { ${computeErrors}<1 } {
+      #No errors to compute, exit here
+      file delete _superfitInitModel.xcm
+      chatter [lindex $oldChatter 0]
+      query $oldQuery
+      return $fitOk
+    } else {
+      #compute errors
+      set fitOk [computeErrors  [lindex $oldChatter 0]]     
+      file delete _superfitInitModel.xcm
+      chatter [lindex $oldChatter 0]
+      query $oldQuery
+      return $fitOk 
+    }          
+  } else {
+    puts "No datasets loaded or no model defined: impossible to fit"
+  }
+}

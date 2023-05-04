@@ -1,0 +1,1286 @@
+#This write a file with parameters, covariance matrix and fluxes
+#for the nuFnu plot tool by Fred Piron
+proc writeAsciiResults { args } {
+  set filename [lindex $args 0]
+  set modelDescription [tcloutr model]  
+  set parameterList [lindex $args 1]
+  set fluxesList [lindex $args 2]
+  
+  file delete $filename
+  set fileid [open $filename w]
+  
+  #Write the model description
+  puts $fileid "#model description"
+  puts $fileid $modelDescription
+  #Write the parameters with errors
+  puts $fileid "#Parameters: \[name\] \[value\] \[negative error\] \[positive error\]"
+  foreach param $parameterList {
+    puts $fileid "[lindex $param 0] [lindex $param 1] [lindex $param 2] [lindex $param 3]"
+  }
+  #Covariance matrix
+  puts $fileid "#Covariance matrix"
+  set npar [tcloutr varpar]
+  for {set i 1} {$i <= $npar} {incr i} {
+    for {set j 1} {$j <= $npar} {incr j} {
+     puts -nonewline $fileid [tcloutr covariance ${i},${j}]
+     puts -nonewline $fileid " "
+    }
+    puts $fileid ""
+  }
+  #Fluxes
+  puts $fileid "#Fluxes: \[Flux_EMIN_EMAX\] \[value\]"
+  foreach flux $fluxesList {
+    puts $fileid "[lindex $flux 0] [lindex $flux 1] [lindex $flux 2] [lindex $flux 3]"
+  }  
+  close $fileid
+}
+
+
+proc divideDatasets { args } {
+#This is reload your data dividing them in groups 
+#Usage: divideDatasets [pha2Number], where pha2number is a string
+#containing the number of the pha2 spectra. For example: divideDatasets "1,1,2,1,1" 1
+#will use spectrum number 1 in datasets 1,2,4 and spectrum number 2 for dataset 2
+  set oldChatter [tcloutr chatter]
+  chatter 0
+  set pha2number [split [lindex $args 0] ","]
+
+  #Now loop saving the parameters
+  #Get the last component
+  set lastCompNumb [tcloutr modcomp]
+  #Get the parameter info for the last component
+  scan [tcloutr compinfo $lastCompNumb] "%s %i %i" name firstPar Npar
+  set numberOfParameters [expr $firstPar+$Npar-1] 
+  set paramInfo [list]
+  for {set ipar 1} {$ipar <= $numberOfParameters} {incr ipar} {
+    lappend paramInfo [tcloutr par $ipar]
+  }
+
+  set ignoreString "ignore "
+  set dataCommands [list]
+  set ignoreCommands [list]
+  set noticeCommands [list]
+  set nData [tcloutr datasets]
+  for {set iter 1} {$iter <= $nData} {incr iter} {
+    set currentFile [tcloutr filename $iter]
+    set currentNoticed [tcloutr noticed $iter]
+    lappend dataCommands " ${currentFile}"
+    lappend ignoreCommands "${iter}:**"
+    lappend noticeCommands "${iter}:$currentNoticed"
+  }
+  
+  for {set iter 0} {$iter <= [expr $nData-1]} {incr iter} {
+    set thisDataN [expr $iter+1]
+    data ${thisDataN}:${thisDataN} [lindex $dataCommands $iter]{[lindex $pha2number $iter]}
+    ignore [lindex $ignoreCommands $iter]
+    notice [lindex $noticeCommands $iter]
+  }
+  
+  if {[llength $args]>1} {
+    set referenceDetectors [split [lindex $args 1] ","]
+    #Add the effective area correction
+    #Get the model syntax
+    #Get the number and name of the components
+    set nComponents [tcloutr modcomp]
+    set sep "\[ \]\?\[\+,\-,\\,*\]\[ \]\?"
+    set toSearch ""
+    for {set thisComp 1} {$thisComp <= $nComponents} {incr thisComp} {
+      scan [tcloutr compinfo $thisComp] "%s %i %i" thisName thisFirst thisN
+      append toSearch $thisName
+      if {$thisComp<$nComponents} {
+        append toSearch $sep
+      }
+    }
+
+    set thisModel [lindex [regexp -inline $toSearch [tcloutr model]] 0]
+    puts $thisModel        
+    
+    set newModel "cons*(${thisModel})"
+    model $newModel & 1 & [join $paramInfo " & "]
+    
+    #Now fix the first effective area correction to 1, leaving the other free to vary by no more than
+    #30 %
+    set effCorrection [list]
+    for {set iter 0} {$iter <= [expr $nData-1]} {incr iter} {
+      if {[lsearch $referenceDetectors [expr ${iter}+1]]>-1} {
+        lappend effCorrection "1 -1"
+      } else {
+        lappend effCorrection "1 0.01 0.7 0.7 1.3 1.3"
+      }      
+    }
+    set effCorrStr "& "
+    append effCorrStr [join $effCorrection "&"]
+    puts "addcomp 1 cons $effCorrStr"
+    addcomp 1 cons $effCorrStr
+    delcomp 2
+  }
+  chatter [lindex $oldChatter 0] [lindex $oldChatter 1]
+}
+
+proc fixEffectiveAreaCorrections { args } {
+  set oldChatter [tcloutr chatter]
+  chatter 0
+  #This rely on the fact that the effective area correction is the first
+  #component of the model
+  #Get the last component
+  set lastCompNumb [tcloutr modcomp]
+  #Get the parameter info for the last component
+  scan [tcloutr compinfo $lastCompNumb] "%s %i %i" name firstPar Npar
+  set numberOfParameters [expr $firstPar+$Npar-1]
+  set nData [tcloutr datasets]
+  for {set iter 0} {$iter <= [expr $nData-1]} {incr iter} {
+    freeze [expr ${iter}*${numberOfParameters}+1]
+  }
+  chatter [lindex $oldChatter 0] [lindex $oldChatter 1]
+}
+
+proc bp {{s {}}} {
+##This gets you a sort of break point: just insert "bp [number" in the line of code you want to stop
+## The tcl interpreter will stop and will give you a prompt where you can print variables...
+        if ![info exists ::bp_skip] {
+           set ::bp_skip [list]
+        } elseif {[lsearch -exact $::bp_skip $s]>=0} return
+        if [catch {info level -1} who] {set who ::}
+        while 1 {
+                puts -nonewline "$who/$s> "; tclflush stdout
+                gets stdin line
+                if {$line=="c"} {puts "continuing.."; break}
+                if {$line=="i"} {set line "info locals"}
+                catch {uplevel 1 $line} res
+                puts $res
+        }
+ }
+
+proc _computeFlux { args } {
+  set emin [lindex $args 0]
+  set emax [lindex $args 1]
+  flux $emin $emax noerr
+  scan [tcloutr flux 1] "%g" flux
+  return $flux
+}
+
+proc _refit { args } {
+  method leven
+  for {set cycle 0} {${cycle}<10} {incr cycle} {
+    set fitNotOk [catch { fit 100000 0.01} errVal]
+    if {$fitNotOk==1} {
+      break
+    }
+  }
+  method leven
+  fit
+  fit
+  return $fitNotOk 
+}
+
+proc _cleanExit { args } {
+  @__model.xcm 
+  file delete __model.xcm
+  set fitNotOk [catch { fit } errVal]
+}
+ 
+proc componentFlux { args } {
+
+#This procedure substitute the normalization of a component
+#with its cflux() convolution model, which represent the
+#flux of that component
+
+set energyMin [lindex $args 0]
+set energyMax [lindex $args 1]
+set deltaT [lindex $args 2]
+set inputFitOk [lindex $args 3]
+set computeComponentFluxes [lindex $args 4]
+
+file delete __model.xcm
+save all __model.xcm
+
+set numberOfComponents [tcloutr modcomp]
+set oldChatter [tcloutr chatter]
+
+chatter 0
+
+######### Get the global flux
+
+#Get the global flux
+if { $inputFitOk==1} {
+  #puts "Getting global flux (no error)"
+  set flux [_computeFlux $energyMin $energyMax]
+  #puts "done"
+  #Get the log10 flux
+  if {${flux} > 1E-11} {
+    set logFluxGlobal [expr log10(${flux})]
+  } else {
+    set logFluxGlobal -100
+  }
+} else {
+  set logFluxGlobal -100
+}
+
+set modelStrings [list]
+set modelParameters [list]
+set haveConstant 0
+set compHaveZeroFlux [list]
+set modelStringsNoCflux [list]
+set modelParametersNoCflux [list]
+
+for {set thisComp 1} {$thisComp <= $numberOfComponents} {incr thisComp} {
+  
+  #Get the name of the component, the first parameter referring to this
+  #component, and the total number of parameters pertaining to this component
+  scan [tcloutr compinfo $thisComp] "%s %i %i" thisName thisFirst thisN
+  
+  #patch for tabular models: the name of the file MUST be the same of the tabular model
+  if { [regexp "\[a|m\]table\{\[^\}\]+\}" [tcloutr model] match]==1 } {
+    #The model expression contains tables!    
+    if {[string match -nocase "*$thisName*" $match]==1} {
+      #The current component is a table model!
+      puts "$thisName is a table model, with definition $match"
+      set thisName $match
+    }
+  }   
+  
+  
+  if { $thisName=="constant"} { 
+    #Effective area correction!
+    #puts "\nHave effective area correction!"
+    set haveConstant 1
+    #This is the number of parameters of the model, except the constant
+    set numberOfModelParameters [expr [tcloutr modpar]/(1.0*[tcloutr datagrp])]
+    set effectiveAreaCorr [list]
+    #Now get the value for the renormalization constants
+    for {set dataset 1} {$dataset<=[tcloutr datagrp]} {incr dataset} {
+      set parNumber [expr int(($dataset-1)*($numberOfModelParameters)+1)]
+      set parValues [tcloutr param $parNumber]
+      set parLink [tcloutr plink $parNumber]
+      if {[lindex $parLink 0]=="T"} {
+        #Parameter is linked!        
+        lappend effectiveAreaCorr [join [lreplace $parLink 0 0] ""] 
+      } else {
+        lappend effectiveAreaCorr $parValues
+      }
+      #puts "Correction $dataset: [tcloutr param $parNumber]"
+    }
+    continue
+  }
+    
+  #Is this an additive model? Yes if it has a "norm" parameter as
+  #last parameter
+  set hypNormId [expr $thisFirst + $thisN -1]
+  set name [lindex [tcloutr pinfo $hypNormId] 0]
+  set compToKeep [list]
+  set compToKeepName [list]
+  set paramsToKeep [list]
+  
+  if { $name=="norm" } {
+    #Save the position,name and parameters of the additive component
+    lappend compToKeep $thisComp
+    lappend compToKeepName $thisName    
+    #Freeze the normalization
+    freeze $hypNormId
+    for {set ipar $thisFirst} {$ipar<=[expr $thisFirst+$thisN-1]} {incr ipar} {
+      lappend paramsToKeep [tcloutr param $ipar]
+    }
+    
+    
+    #Now proceed until we encounter another component
+    #with a normalization
+    for {set thisComp2 [expr $thisComp+1]} {$thisComp2 <= $numberOfComponents} {incr thisComp2} {
+      scan [tcloutr compinfo $thisComp2] "%s %i %i" thisName2 thisFirst2 thisN2
+      set hypNormId2 [expr $thisFirst2 + $thisN2 -1]
+      set name2 [lindex [tcloutr pinfo $hypNormId2] 0]
+
+      if {$name2=="norm"} { 
+        break
+      } else {
+        lappend compToKeep $thisComp2
+        lappend compToKeepName $thisName2
+        for {set ipar $thisFirst2} {$ipar<=[expr $thisFirst2+$thisN2-1]} {incr ipar} {
+          lappend paramsToKeep [tcloutr param $ipar]
+        }
+      } 
+    }
+  } else {
+    continue
+  }
+  
+  set cName [join $compToKeepName " * "]
+  #puts "Found component $cName :"    
+  
+  #Reset the model, and load only the components we want to evaluate
+  model none
+  set modelStr [join $compToKeepName "*"]
+  set paramStr [join $paramsToKeep " & "]
+  model $modelStr & $paramStr   
+  #Get the flux of this component
+  
+  if {$inputFitOk<1} {
+    set flux 0
+  } else {
+    #puts "  Getting flux of this component (no error)..."
+    set flux [_computeFlux $energyMin $energyMax]
+    #puts "done"
+  }
+  
+  #Get the log10 flux
+  if {${flux} > 1E-12} {
+    set logFlux [expr log10(${flux})]
+    
+    #Regenerate the model with the cflux at the beginning
+    set modelString ""
+    append modelString "cflux("
+    append modelString [join $compToKeepName "*"]
+    append modelString ")"
+    lappend modelStrings $modelString
+    
+    set modelString ""
+    append modelString [join $compToKeepName "*"]    
+    lappend modelStringsNoCflux $modelString
+    
+    #Now reset the parameters
+    set modelString ""
+    append modelString " & ${energyMin} -1 $energyMin $energyMin $energyMax $energyMax & ${energyMax} -1 $energyMin $energyMin $energyMax $energyMax & $logFlux "
+    append modelString "& $paramStr"      
+    lappend modelParameters $modelString
+    
+    lappend modelParametersNoCflux "& $paramStr"
+    
+    lappend compHaveZeroFlux 0
+    
+  } else {
+    if {${inputFitOk}==1} {
+      #This component has zero flux in the requested band. Add it without the cflux() component,
+      #otherwise Xspec will produce NaNs
+      puts "\nComponent $cName has zero flux in the band $energyMin - $energyMax keV"
+    }
+    set modelString ""
+    append modelString [join $compToKeepName "*"]
+    lappend modelStrings $modelString
+    lappend modelStringsNoCflux $modelString
+    #Now reset the parameters
+    set modelString ""
+    append modelString "& $paramStr"      
+    lappend modelParameters $modelString
+    lappend modelParametersNoCflux $modelString
+    #Now let's take note that we need to add a component with 0 flux in the output lists
+    lappend compHaveZeroFlux 1    
+  }
+    
+  #Restore the original model
+  @__model.xcm
+} 
+
+set nComponents [llength $compHaveZeroFlux]
+
+if {[lsearch $compHaveZeroFlux 0]==-1 || $inputFitOk<1 || $logFluxGlobal==-100} {
+  #All the components have zero flux!
+  set fluences [list]
+  lappend modelStrings "fake"
+  foreach md $modelStrings {
+    lappend fluences [list 0 0 0 1]
+  }
+  #Restore the original model
+  _cleanExit
+  chatter [lindex $oldChatter 0] [lindex $oldChatter 1]
+  return $fluences
+}
+  
+if {$haveConstant==1} {
+  set finalModelString "constant*("
+  set finalModelStringGlobalFlux "constant*cflux("
+} else {
+  set finalModelString "("
+  set finalModelStringGlobalFlux "cflux("
+}
+  
+#Finally load everything
+append finalModelString [join $modelStrings "+"]
+append finalModelString ")"
+
+append finalModelStringGlobalFlux [join $modelStringsNoCflux "+"]
+append finalModelStringGlobalFlux ")"
+
+if {$haveConstant==1} {
+  set finalParametersGlobalFlux "& 1 -1  & ${energyMin} -1 $energyMin $energyMin $energyMax $energyMax & ${energyMax} -1 $energyMin $energyMin $energyMax $energyMax & $logFluxGlobal"
+  set finalParameters "& 1 -1"
+} else {
+  set finalParametersGlobalFlux "& ${energyMin} -1 $energyMin $energyMin $energyMax $energyMax & ${energyMax} -1 $energyMin $energyMin $energyMax $energyMax & $logFluxGlobal"
+  set finalParameters ""
+}
+
+append finalParameters [join $modelParameters " "]
+append finalParametersGlobalFlux [join $modelParametersNoCflux " "] 
+
+#Now compute the global flux and errors
+model $finalModelStringGlobalFlux $finalParametersGlobalFlux
+
+#If we have effective area corrections, reset them before the fit
+if {$haveConstant} {
+  set corrFactorSet 0
+  for {set parNumber 1} {$parNumber<=[tcloutr modpar]} {incr parNumber} {
+      set parName [lindex [tcloutr pinfo $parNumber] 0]
+      if {$parName=="factor"} {
+        newpar $parNumber [lindex $effectiveAreaCorr $corrFactorSet]
+        incr corrFactorSet
+      }      
+    }  
+}
+
+#Fit to compute the covariance matrix
+#First fixing everything except the global flux
+if {$haveConstant} {
+  set firstCflux 2
+} else {
+  set firstCflux 1
+}
+scan [tcloutr compinfo $firstCflux] "%s %i %i" firstName firstFirst firstN
+set parOfInterestfirst [expr $firstFirst+$firstN-1]
+
+freeze 1-[tcloutr modpar]
+thaw $parOfInterestfirst
+set fitNotOk [_refit]
+scan [tcloutr par $parOfInterestfirst] "%g %f" newValueForTheLog ciaps
+model $finalModelStringGlobalFlux $finalParametersGlobalFlux
+
+#If we have effective area corrections, reset them before the fit
+if {$haveConstant} {
+  set corrFactorSet 0
+  for {set parNumber 1} {$parNumber<=[tcloutr modpar]} {incr parNumber} {
+      set parName [lindex [tcloutr pinfo $parNumber] 0]
+      if {$parName=="factor"} {
+        newpar $parNumber [lindex $effectiveAreaCorr $corrFactorSet]
+        incr corrFactorSet
+      }      
+    }  
+}
+
+new $parOfInterestfirst $newValueForTheLog
+#puts "Fitting to get the covariance matrix after the decomposition"
+set fitNotOk [_refit]
+#puts "done"
+
+if {$fitNotOk || $inputFitOk<1} {
+  #Problems with the fit. Most likely, one of the components is not well
+  #constrained
+  puts "Problem with the fit while computing the fluxes of the components"
+  set fluences [list]
+  for {set iter 1} {$iter<=[llength $modelStrings]} {incr iter} {
+    lappend fluences [list 0 0 0 0]
+  }
+  _cleanExit
+  chatter [lindex $oldChatter 0] [lindex $oldChatter 1]  
+  return $fluences
+}
+#Set up the global fluence list. This will be returned by the function, with in the first
+#position the global fluence, and in the other the different components
+set fluences [list]
+
+#Get the global fluence and errors
+
+#Get the value
+scan [tcloutr par $parOfInterestfirst] "%g %f" cfluxValueLog cfluxDelta
+set cfluxValue [expr pow(10,$cfluxValueLog)*$deltaT]
+
+set accuracy 0.01
+puts -nonewline "Computing error for the global flux in the band $energyMin $energyMax ..."
+tclflush stdout
+if { [catch { error stop 100 $accuracy 1.0 $parOfInterestfirst } errVal]  } {            
+   #Error computation failed           
+   set cfluxErrorM 0
+   set cfluxErrorP 0
+   set cfluxErrorStatus 0
+   puts "Cannot compute error for the global flux"                    
+} else {
+   scan [tcloutr error $parOfInterestfirst] "%g %g %s" minValue maxValue errorString
+   set cfluxErrorM [expr (pow(10,$minValue)-pow(10,$cfluxValueLog))*$deltaT]
+   set cfluxErrorP [expr (pow(10,$maxValue)-pow(10,$cfluxValueLog))*$deltaT]
+   if {$cfluxErrorM != 0 && $cfluxErrorP != 0} {
+     set cfluxErrorStatus 1
+   } else {
+     set cfluxErrorStatus 0
+   }
+}
+puts "done"
+#puts "Global fluence:"
+#puts "      Fluence ($energyMin - $energyMax keV) = $cfluxValue $cfluxErrorM +$cfluxErrorP erg/s/cm2"
+lappend fluences [list $cfluxValue $cfluxErrorM $cfluxErrorP $cfluxErrorStatus] 
+
+#Now compute the components fluxes, if requested
+if { $computeComponentFluxes!=1 } {
+  _cleanExit
+  chatter [lindex $oldChatter 0] [lindex $oldChatter 1]  
+  return $fluences
+} else {
+  if {$nComponents==1} {
+    #Only one component, its flux is the same as the global one
+    lappend fluences [list $cfluxValue $cfluxErrorM $cfluxErrorP $cfluxErrorStatus]
+    _cleanExit
+    chatter [lindex $oldChatter 0] [lindex $oldChatter 1]
+    return $fluences
+  }
+  #compute component fluxes
+  model none
+  model $finalModelString $finalParameters
+
+  #If we have effective area corrections, reset them before the fit
+  if {$haveConstant} {
+    set corrFactorSet 0
+    for {set parNumber 1} {$parNumber<=[tcloutr modpar]} {incr parNumber} {
+        set parName [lindex [tcloutr pinfo $parNumber] 0]
+        if {$parName=="factor"} {
+          newpar $parNumber [lindex $effectiveAreaCorr $corrFactorSet]
+          incr corrFactorSet
+        }      
+      }  
+  }
+
+  #Fit to compute the covariance matrix
+  puts "Fitting after decomposition (component by component step)"
+  set fitNotOk [_refit]
+  puts "done"
+  if {$fitNotOk || $inputFitOk<1} {
+    #Problems with the fit. Most likely, one of the two components is not well
+    #constrained
+    puts "Problem with the fit while computing the fluxes of the components"
+    set fluences [list]
+    for {set iter 1} {$iter<=[llength $modelStrings]} {incr iter} {
+      lappend fluences [list 0 0 0 0]
+    }
+
+    _cleanExit
+    chatter [lindex $oldChatter 0] [lindex $oldChatter 1]  
+    return $fluences
+  }
+  #Now look for the cflux component and return its position(s)
+  set positions [list]
+  #puts "1"
+  for {set compIter 1} {$compIter <= [tcloutr modcomp]} {incr compIter} {
+    scan [tcloutr compinfo $compIter] "%s %i %i" thisName4 thisFirst4 thisN4
+    if {$thisName4=="cflux"} { 
+      lappend positions $compIter 
+    } else {
+      continue
+    }
+  }
+  #puts "2"
+  #Reset the list of position of the cflux components
+  set positions [list]
+  
+  for {set compIter 1} {$compIter <= [tcloutr modcomp]} {incr compIter} {
+    scan [tcloutr compinfo $compIter] "%s %i %i" thisName4 thisFirst4 thisN4
+    if {$thisName4=="cflux"} { 
+      lappend positions $compIter
+      #Free the flux parameter
+      scan [tcloutr compinfo $compIter] "%s %i %i" lastName lastFirst lastN
+      set parOfInterest [expr $lastFirst+$lastN-1]
+      thaw $parOfInterest  
+    } else {
+      continue
+    }
+  }
+  #puts "3"
+  #chatter 10
+  #show model
+  ################ now get the component fluxes
+  set componentNumber 0
+  foreach thisFluxIsZero $compHaveZeroFlux {
+    if {$thisFluxIsZero==1} {
+      lappend fluences [list 0 0 0 1]
+      #set componentNumber [expr $componentNumber +1]
+      #puts "4"
+    } else {
+      #puts "5"
+      set thisCflux [lindex $positions $componentNumber]
+      set componentNumber [expr $componentNumber +1]      
+      #bp
+      #Get what is the actual parameter of interest        
+      scan [tcloutr compinfo $thisCflux] "%s %i %i" thisName thisFirst thisN
+      set parOfInterest [expr $thisFirst+$thisN-1]    
+      
+      #Get the value
+      scan [tcloutr par $parOfInterest] "%g %f" cfluxValueLog cfluxDelta
+      set cfluxValue [expr pow(10,$cfluxValueLog)*$deltaT]
+      
+      puts "Computing error for component $componentNumber ..."
+      set accuracy 0.01
+      if { [catch { error stop 100 $accuracy 1.0 $parOfInterest } errVal]  } {            
+         #Error computation failed           
+         set cfluxErrorM 0
+         set cfluxErrorP 0
+         set cfluxErrorStatus 0
+         puts "Cannot compute error for the flux for the current component (cflux $thisCflux)"                    
+      } else {
+         scan [tcloutr error $parOfInterest] "%g %g %s" minValue maxValue errorString
+         set cfluxErrorM [expr (pow(10,$minValue)-pow(10,$cfluxValueLog))*$deltaT]
+         set cfluxErrorP [expr (pow(10,$maxValue)-pow(10,$cfluxValueLog))*$deltaT]
+         if {$cfluxErrorM != 0 && $cfluxErrorP != 0} {
+           set cfluxErrorStatus 1
+         } else {
+           set cfluxErrorStatus 0
+         }
+      }
+      #puts "Component # ${componentNumber}:"
+      #puts "      Fluence ($energyMin - $energyMax keV) = $cfluxValue $cfluxErrorM +$cfluxErrorP erg/s/cm2"  
+      puts "done"
+      lappend fluences [list $cfluxValue $cfluxErrorM $cfluxErrorP $cfluxErrorStatus] 
+    } 
+  }
+}
+
+#Restore the original model
+_cleanExit
+chatter [lindex $oldChatter 0] [lindex $oldChatter 1]
+return $fluences
+}
+
+
+proc saveFits {args} {
+  
+  if {[llength $args] == 0} {
+    puts "Usage: saveFits FITSfile"
+    puts " "
+    puts "Save the results of the current model in a FITS file."
+    puts "If the file already exists, a new row will be appended"  
+    return
+  }
+  
+  set FITSfile "out.fits"
+  if {[llength $args] > 0} {
+     set FITSfile [lindex $args 0]
+     if {[llength $args] > 1} { 
+       set suffix [lindex $args 1]
+       set t1 [lindex $args 2]
+       set t2 [lindex $args 3]
+       set deltaT [expr $t2-$t1]
+       set fitOk [lindex $args 4]
+       set z [lindex $args 5]
+       set intNumber [lindex $args 6]
+       set fluxEnergyBandsString [lindex $args 7]
+       set computeFluxComponentByComponent [lindex $args 8]
+     } else {
+       set suffix ""
+     }
+  }
+    
+  puts "\n\nThis is saveFits v 4.0"
+  if {$fitOk>0} { puts "Input fit was Ok" } else { puts "Input fit was NOT Ok" }
+    
+  set nDatasets [tcloutr datasets]
+
+  if {$nDatasets > 0 && [tcloutr model] != ""} {
+    
+    scan [tcloutr chatter] "%i" oldChatter
+    chatter 0
+    
+    #get the model name
+    set modelName [tcloutr model]
+    regsub -all " +" $modelName "" modelName
+    
+    #Get the parameter name, value and errors
+    set parameters [list] 
+    set usedNames [list]
+    for {set thisComp 1} {$thisComp <= [tcloutr modcomp]} {incr thisComp} {
+      #Get the name of the component, the first parameter referring to this
+      #component, and the total number of parameter pertaining to this component
+      scan [tcloutr compinfo $thisComp] "%s %i %i" thisName thisFirst thisN
+      #Remove spaces in the name
+      regsub -all " +" $thisName "" thisName
+      
+      set ie 0
+      while {[lsearch $usedNames $thisName]!=-1} {
+          #Name for this component has already been used, append a number
+          set ie [expr $ie + 1]
+          set thisName "${thisName}${ie}"
+      }
+      lappend usedNames $thisName
+      
+      #loop over the parameters
+      for {set thisPar $thisFirst} {$thisPar < [expr $thisN+$thisFirst]} {incr thisPar} {
+        
+        #Get the name and the unit for this parameter
+        set nRead [scan [tcloutr pinfo $thisPar] "%s %s" parName parUnit]
+        if { $parName=="factor" } { continue }
+        #Deal with the special case when the input fit is an invalid fit
+        if { $fitOk<1 } {
+          #Invalid input fit
+          #Get the value and the initial Delta for the parameter        
+          scan [tcloutr par $thisPar] "%g %f" parValue parDelta
+          
+          set parValue $parValue
+          set parErrorM 0
+          set parErrorP 0
+          set parErrorStatus 0
+        
+        } else {
+        
+          #We have a valid fit
+          
+          #Get the value and the initial Delta for the parameter        
+          scan [tcloutr par $thisPar] "%g %f" parValue parDelta
+          
+          if {$parDelta <= 0} {
+            
+            #Fixed parameter, no error
+            
+            set parErrorM -1
+            set parErrorP -1
+            set parErrorStatus 2
+          
+          } else {
+            
+            #Variable parameter, compute the error
+            
+            #First check that the fit has converged respect to this parameter
+            
+            if { ! [scan [tcloutr sigma $thisPar] "%g" parSigma] } {
+              #If we are here, scan has failed, which means parSigma = nan
+              #assign -1 so that the following "if" evaluate false
+              set parSigma -1
+              set fitOk 0
+            }
+            
+            if {$parSigma > 0 } {
+              
+              #Yes, the fit has converged, try and compute the error
+              
+              set accuracy 0.01
+
+              if { [catch { error stop 100 $accuracy 1.0 $thisPar } errVal]  } { 
+                 
+                 #Error computation failed
+                 
+                 set parErrorM 0
+                 set parErrorP 0
+                 set parErrorStatus 0
+                 puts "Cannot compute error for variable parameter $thisPar"
+               } else {
+                 
+                 #Error computed
+                 
+                 scan [tcloutr error $thisPar] "%g %g %s" minValue maxValue errorString
+                 set parErrorM [expr $minValue - $parValue]
+                 set parErrorP [expr $maxValue - $parValue]
+                 if {$parErrorM != 0 && $parErrorP != 0} {
+                   set parErrorStatus 1
+                 } else {
+                   set parErrorStatus 0
+                 }
+               }
+            } else {
+            
+              #The fit has not converged respect to this parameter.
+              
+              set parErrorM 0
+              set parErrorP 0
+              set parErrorStatus 0
+            }
+          }
+        }
+        
+        if {$nRead > 1} { 
+          #Print also the unit of the parameter
+          if {$parErrorStatus==1} { 
+            puts "$thisName:$parName = $parValue $parErrorM +$parErrorP ($parUnit)" 
+          }
+          lappend parameters [list ${thisName}_$parName $parValue $parErrorM $parErrorP $parUnit $parErrorStatus]
+        }
+        
+        if {$nRead ==1} { 
+          #No parameter unit available
+          if {$parErrorStatus==1} {
+            puts "$thisName:$parName = $parValue $parErrorM +$parErrorP"
+          }
+          lappend parameters [list ${thisName}_$parName $parValue $parErrorM $parErrorP " " $parErrorStatus] 
+        }
+        if { $parErrorStatus==0 } {
+          if { $fitOk==1 } {
+            puts "Could not compute error for parameter $thisPar . Changing fit status to 'not ok'"
+          }
+          set fitOk 0
+        }
+      }
+    }
+        
+    #Now write the statistic
+    set statName "PGstat"
+    set statValue [tcloutr stat]
+    set dofSw [tcloutr dof]
+    set dof [lindex $dofSw 0]
+    puts "$statName = $statValue"
+    
+    #Now compute the fluxes
+    #First of all check that the covariance matrix is of the right size:
+    #if Leven goes into trouble, it can fix parameters without notice, invalidating
+    #the covariance matrix
+    #Let's try to access the last elements of the matrix, if we can't than the
+    #covariance matrix is not valid
+    if {$fitOk>0} {
+      set nParams [tcloutr varpar]
+      if { [catch { tcloutr covariance $nParams $nParams } errVal] } { 
+        puts "Covariance matrix is invalid (likely there is one or more unconstrained parameters)!"
+        set fitOk 0 
+      }
+    }
+    
+    set bands [split $fluxEnergyBandsString ","]
+    set desiredBands [list]
+    foreach b $bands {
+      lappend desiredBands [split $b "-"]
+    }
+    
+    set fluxes [list]
+    set fluences [list]    
+    set compFluxes [list]
+    
+    foreach band $desiredBands {
+      
+      set bandMin [lindex $band 0]
+      set bandMax [lindex $band 1]
+      
+      #Get the fluence in this band
+      set cflux [componentFlux $bandMin $bandMax 1 $fitOk 0]
+      
+      set flux1 [lindex [lindex $cflux 0 ] 0]
+      set flux1errM [lindex [lindex $cflux 0 ] 1]
+      set flux1errP [lindex [lindex $cflux 0 ] 2]  
+      
+      set fluence1 [expr $flux1 * $deltaT]
+      set fluence1errM [expr $flux1errM * $deltaT]
+      set fluence1errP [expr $flux1errP * $deltaT]      
+      
+      puts "\nFlux ($bandMin-$bandMax keV) = $flux1 $flux1errM +$flux1errP erg/cm2/s"
+      puts "Fluence ($bandMin-$bandMax keV) = $fluence1 $fluence1errM +$fluence1errP erg/cm2"
+      
+      #Save the results in the lists            
+      lappend fluxes [list "FLUX_${bandMin}_$bandMax" $flux1 $flux1errM $flux1errP]      
+      lappend fluences [list "FLUENCE_${bandMin}_$bandMax" $fluence1 $fluence1errM $fluence1errP]
+      
+      if {$computeFluxComponentByComponent==1} {
+          #Get the fluence component by component in this energy band
+          puts "\nComputing fluxes component by component..."
+          set ccfluxes [componentFlux $bandMin $bandMax 1 $fitOk 1]
+        } else {
+          puts "\nSkipping flux/fluences computation component by component..."
+          set ccfluxes [componentFlux $bandMin $bandMax 1 0 1]
+      }
+      #Remove first item (which is again the global flux)
+      set ccfluxes [lrange $ccfluxes 1 end]
+      for {set thisLid 1} {$thisLid<=[expr [llength $ccfluxes]]} {incr thisLid} {        
+        if {$computeFluxComponentByComponent==1} {
+          set f1 [lindex [lindex $ccfluxes [expr $thisLid -1]] 0]
+          set f1_errM [lindex [lindex $ccfluxes [expr $thisLid -1]] 1]
+          set f1_errP [lindex [lindex $ccfluxes [expr $thisLid -1]] 2]
+          puts "\nFlux component $thisLid ($bandMin-$bandMax keV) = $f1 $f1_errM +$f1_errP erg/cm2/s"
+        }
+        lappend compFluxes [list "FLUX_C${thisLid}_${bandMin}_${bandMax}" [lindex $ccfluxes [expr $thisLid -1]]]  
+      }
+    }
+
+    if { $fitOk>0 } {
+      #Write the log file
+      set logFileName [lindex [split $FITSfile "."] 0]
+      append logFileName "_int${intNumber}.log"
+      writeAsciiResults $logFileName $parameters $fluxes $intNumber
+    }
+    #Now perform the computation of the fluence (and L and Eiso) component by component
+    #First of all compute the luminosity
+    if {$z > 0 && $fitOk>0} {
+      lumin 1 1e7 $z noerr
+      scan [tcloutr lumin 1] "%g" L
+      set L [expr $L/1E9]
+    } else {
+      set L 0
+    }
+    
+    set compL [list]
+    set compEiso [list]
+    set compLAmati [list]
+    set compEisoAmati [list]
+    
+    if { $z!=0 && $fitOk>0} {
+      
+      #Now compute L and Eiso, component by component
+      #First compute how the energies translate in the reference frame
+      set eminReferenceFrame [expr 1/(1+$z)]
+      set emaxReferenceFrame [expr 1e7/(1+$z)]
+      #Now compute the fluxes in the energy range of the reference frame
+      if {$computeFluxComponentByComponent==1} {
+        puts "\nRedshift available, computing L and Eiso component by component..."
+        set fluxesReferenceFrame [componentFlux $eminReferenceFrame $emaxReferenceFrame 1 $fitOk 1]
+        puts "done"
+      } else {
+        puts "\nRedshift available, computing L and Eiso, skipping the component-by-component computation..."
+        set fluxesReferenceFrame [componentFlux $eminReferenceFrame $emaxReferenceFrame 1 $fitOk 0]
+        set zeros [componentFlux $eminReferenceFrame $emaxReferenceFrame 1 0 1]
+        set fluxesReferenceFrame [lreplace $zeros 0 0 [lindex $fluxesReferenceFrame 0]]
+        puts "done"
+      }
+      #Now get the total flux in the energy range of the reference frame
+      set totalFluxReferenceFrame [lindex [lindex $fluxesReferenceFrame 0] 0]
+      #Now get the conversion factor between this totalFlux and the luminosity
+      set convFactor [expr $L/$totalFluxReferenceFrame]
+
+      #Finally, get the L and Eiso for the components
+      foreach thisFlux $fluxesReferenceFrame {
+        set thisL    [expr [lindex $thisFlux 0]*$convFactor]
+        set thisLM   [expr [lindex $thisFlux 1]*$convFactor]
+        set thisLP   [expr [lindex $thisFlux 2]*$convFactor]
+        
+        set thisEiso  [expr $thisL/10*$deltaT/(1+$z)]
+        set thisEisoM [expr ( ($thisLM)/10*$deltaT/(1+$z))]
+        set thisEisoP [expr ( ($thisLP)/10*$deltaT/(1+$z))]
+        
+        lappend compL [list $thisL $thisLM $thisLP]
+        lappend compEiso [list $thisEiso $thisEisoM $thisEisoP]
+        
+      }
+      
+      #Now compute again everything, this time in the Amati energy band 1 keV - 10 MeV
+      #First compute how the energies translate in the reference frame
+      set eminReferenceFrameAmati [expr 1/(1+$z)]
+      set emaxReferenceFrameAmati [expr 1e4/(1+$z)]
+      #Now compute the fluxes in the energy range of the No redshift available or problemreference FrameAmati
+      if {$computeFluxComponentByComponent==1} {
+        puts "\nRedshift available, computing L and Eiso (Amati) component by component..."
+        set fluxesReferenceFrameAmati [componentFlux $eminReferenceFrameAmati $emaxReferenceFrameAmati 1 $fitOk 1]
+        puts "done"
+      } else {
+        puts "\nRedshift available, computing L and Eiso (Amati), skipping the component-by-component computation..."
+        set fluxesReferenceFrameAmati [componentFlux $eminReferenceFrameAmati $emaxReferenceFrameAmati 1 $fitOk 0]
+        set zeros [componentFlux $eminReferenceFrameAmati $emaxReferenceFrameAmati 1 0 1]
+        set fluxesReferenceFrameAmati [lreplace $zeros 0 0 [lindex $fluxesReferenceFrameAmati 0]]
+        puts "done"
+      }
+
+      #Now get the total flux in the energy range of the reference FrameAmati
+      set totalFluxReferenceFrameAmati [lindex [lindex $fluxesReferenceFrameAmati 0] 0]
+      #Now get the conversion factor between this totalFlux and the luminosity
+      set convFactorAmati $convFactor
+
+      #Finally, get the L and Eiso for the components
+
+      foreach thisFlux $fluxesReferenceFrameAmati {
+        set thisL    [expr [lindex $thisFlux 0]*$convFactorAmati]
+        set thisLM   [expr [lindex $thisFlux 1]*$convFactorAmati]
+        set thisLP   [expr [lindex $thisFlux 2]*$convFactorAmati]
+        
+        set thisEiso  [expr $thisL/10*$deltaT/(1+$z)]
+        set thisEisoM [expr ( ($thisLM)/10*$deltaT/(1+$z))]
+        set thisEisoP [expr ( ($thisLP)/10*$deltaT/(1+$z))]
+        
+        lappend compLAmati [list $thisL $thisLM $thisLP]
+        lappend compEisoAmati [list $thisEiso $thisEisoM $thisEisoP]
+        
+      }      
+      
+      
+      for {set thisLid 0} {$thisLid<=[expr [llength $compL]-1]} {incr thisLid} {
+        if {$thisLid==0} {
+          puts ""
+        } else {
+         puts "\nComponent $thisLid:"
+        }
+        puts " L            = [lindex [lindex $compL $thisLid] 0] [lindex [lindex $compL $thisLid] 1] [lindex [lindex $compL $thisLid] 2] x 10**53 erg/s (for z = $z)"
+        puts " Eiso         = [lindex [lindex $compEiso $thisLid] 0] [lindex [lindex $compEiso $thisLid] 1] [lindex [lindex $compEiso $thisLid] 2] x 10**54 erg (for z = $z)"
+        puts " L (Amati)    = [lindex [lindex $compLAmati $thisLid] 0] [lindex [lindex $compLAmati $thisLid] 1] [lindex [lindex $compLAmati $thisLid] 2] x 10**53 erg/s (for z = $z)"
+        puts " Eiso (Amati) = [lindex [lindex $compEisoAmati $thisLid] 0] [lindex [lindex $compEisoAmati $thisLid] 1] [lindex [lindex $compEisoAmati $thisLid] 2] x 10**54 erg (for z = $z)"
+
+      }  
+    } else {
+      puts "hey"
+      lappend compL [list 0 0 0]
+      lappend compEiso [list 0 0 0]
+      lappend compLAmati [list 0 0 0]
+      lappend compEisoAmati [list 0 0 0]
+      for {set thisLid 0} {$thisLid<=[expr [llength $ccfluxes]-1]} {incr thisLid} {
+        lappend compL [list 0 0 0]
+        lappend compEiso [list 0 0 0]
+        lappend compLAmati [list 0 0 0]
+        lappend compEisoAmati [list 0 0 0]
+      }
+    }
+                
+    #Transfer the global Eiso to the proper variables and remove it from the lists
+    if { $z!=0} {
+      set L  [lindex [lindex $compL 0] 0]
+      set LM [lindex [lindex $compL 0] 1]
+      set LP [lindex [lindex $compL 0] 2]
+      set Eiso [lindex [lindex $compEiso 0] 0]
+      set EisoM [lindex [lindex $compEiso 0] 1]
+      set EisoP [lindex [lindex $compEiso 0] 2]
+      set LAmati  [lindex [lindex $compLAmati 0] 0]
+      set LAmatiM [lindex [lindex $compLAmati 0] 1]
+      set LAmatiP [lindex [lindex $compLAmati 0] 2]
+      set EisoAmati [lindex [lindex $compEisoAmati 0] 0]
+      set EisoAmatiM [lindex [lindex $compEisoAmati 0] 1]
+      set EisoAmatiP [lindex [lindex $compEisoAmati 0] 2]
+    } else {
+      puts "No redshift available or problem with the fit, impossible to compute Eiso"
+      set L 0.0
+      set LM 0.0
+      set LP 0.0
+      set Eiso 0.0
+      set EisoM 0.0
+      set EisoP 0.0
+      set LAmati 0.0
+      set LAmatiM 0.0
+      set LAmatiP 0.0
+      set EisoAmati 0.0
+      set EisoAmatiM 0.0
+      set EisoAmatiP 0.0
+    }
+    set compL [lreplace $compL 0 0]
+    set compEiso [lreplace $compEiso 0 0]
+    set compLAmati [lreplace $compLAmati 0 0]
+    set compEisoAmati [lreplace $compEisoAmati 0 0]
+    
+    #Now create the column file descriptor
+    set cdfile $FITSfile
+    append cdfile "-cd"
+    file delete $cdfile
+    set fileid [open $cdfile w]
+    
+    puts $fileid "${suffix}MODEL 30A"
+    puts $fileid "${suffix}STAT_NAME 12A"
+    puts $fileid "${suffix}STAT_VALUE E"
+    puts $fileid "${suffix}DOF E"
+
+    #L columns
+    puts $fileid "${suffix}L E E53erg"
+    puts $fileid "${suffix}L_ErrM E E53erg"
+    puts $fileid "${suffix}L_ErrP E E53erg"
+    
+    #Eiso columns
+    puts $fileid "${suffix}EISO E E54erg"
+    puts $fileid "${suffix}EISO_ErrM E E54erg"
+    puts $fileid "${suffix}EISO_ErrP E E54erg"
+    
+    #LAmati columns
+    puts $fileid "${suffix}LAmati E E53erg"
+    puts $fileid "${suffix}LAmati_ErrM E E53erg"
+    puts $fileid "${suffix}LAmati_ErrP E E53erg"
+    
+    #Eiso columns
+    puts $fileid "${suffix}EISOAmati E E54erg"
+    puts $fileid "${suffix}EISOAmati_ErrM E E54erg"
+    puts $fileid "${suffix}EISOAmati_ErrP E E54erg"
+    
+    #fluxes columns
+    foreach flux $fluxes {
+      set thisLine [lindex $flux 0]
+      append thisLine " E erg_cm2_s"
+      puts $fileid "$suffix$thisLine"
+      set thisLine [lindex $flux 0]
+      append thisLine "_ErrM E erg_cm2_s"
+      puts $fileid "$suffix$thisLine"
+      set thisLine [lindex $flux 0]
+      append thisLine "_ErrP E erg_cm2_s"
+      puts $fileid "$suffix$thisLine"
+    }
+    #fluences columns
+    foreach fluence $fluences {
+      set thisLine [lindex $fluence 0]
+      append thisLine " E erg_cm2"
+      puts $fileid "$suffix$thisLine"
+      set thisLine [lindex $fluence 0]
+      append thisLine "_ErrM E erg_cm2"
+      puts $fileid "$suffix$thisLine"
+      set thisLine [lindex $fluence 0]
+      append thisLine "_ErrP E erg_cm2"
+      puts $fileid "$suffix$thisLine"
+    }
+    
+    #Components fluxes
+    for {set thisLid 0} {$thisLid<=[expr [llength $compFluxes]-1]} {incr thisLid} {
+       set thisList [lindex $compFluxes $thisLid]
+       set thisName [lindex $thisList 0]
+       set thisLine "$thisName E erg_cm2"
+       puts $fileid "$suffix$thisLine"
+       set thisLine "${thisName}_ErrM E erg_cm2"
+       puts $fileid "$suffix$thisLine"
+       set thisLine "${thisName}_ErrP E erg_cm2"
+       puts $fileid "$suffix$thisLine"
+       set thisLine "${thisName}_Status E"
+       puts $fileid "$suffix$thisLine"
+    }
+    #Components L and Eiso columns
+    for {set thisLid 0} {$thisLid<=[expr [llength $compL]-1]} {incr thisLid} {      
+       set thisLine "C[expr $thisLid+1]_L E erg_cm2"
+       puts $fileid "$suffix$thisLine"
+       set thisLine "C[expr $thisLid+1]_L_ErrM E erg_cm2"
+       puts $fileid "$suffix$thisLine"
+       set thisLine "C[expr $thisLid+1]_L_ErrP E erg_cm2"
+       puts $fileid "$suffix$thisLine"
+       
+       set thisLine "C[expr $thisLid+1]_EISO E erg_cm2"
+       puts $fileid "$suffix$thisLine"
+       set thisLine "C[expr $thisLid+1]_EISO_ErrM E erg_cm2"
+       puts $fileid "$suffix$thisLine"
+       set thisLine "C[expr $thisLid+1]_EISO_ErrP E erg_cm2"
+       puts $fileid "$suffix$thisLine"
+       
+       set thisLine "C[expr $thisLid+1]_LAmati E erg_cm2"
+       puts $fileid "$suffix$thisLine"
+       set thisLine "C[expr $thisLid+1]_LAmati_ErrM E erg_cm2"
+       puts $fileid "$suffix$thisLine"
+       set thisLine "C[expr $thisLid+1]_LAmati_ErrP E erg_cm2"
+       puts $fileid "$suffix$thisLine"
+       
+       set thisLine "C[expr $thisLid+1]_EISOAmati E erg_cm2"
+       puts $fileid "$suffix$thisLine"
+       set thisLine "C[expr $thisLid+1]_EISOAmati_ErrM E erg_cm2"
+       puts $fileid "$suffix$thisLine"
+       set thisLine "C[expr $thisLid+1]_EISOAmati_ErrP E erg_cm2"
+       puts $fileid "$suffix$thisLine"
+    }
+    
+    #parameters columns
+    foreach par $parameters {
+      set thisLine [lindex $par 0]
+      set thisUnit [lindex $par 4]
+      append thisLine " E $thisUnit"
+      puts $fileid "$suffix$thisLine"
+      set thisLine [lindex $par 0]
+      append thisLine "_ErrM E $thisUnit"
+      puts $fileid "$suffix$thisLine"
+      set thisLine [lindex $par 0]
+      append thisLine "_ErrP E $thisUnit"
+      puts $fileid "$suffix$thisLine"
+    }
+    puts $fileid "${suffix}ERROR_MASK 32A"
+    close $fileid
+    
+    #Now create the ascii file containing the actual numbers
+    set txtfile $FITSfile
+    append txtfile "-txt"
+    file delete $txtfile
+    set fileid [open $txtfile w]     
+    
+    set thisLine ""
+    append thisLine $modelName
+    append thisLine " $statName"
+    append thisLine " $statValue"
+    append thisLine " $dof"
+    append thisLine " $L"
+    append thisLine " $LM"
+    append thisLine " $LP"
+    append thisLine " $Eiso"
+    append thisLine " $EisoM"
+    append thisLine " $EisoP"
+    append thisLine " $LAmati"
+    append thisLine " $LAmatiM"
+    append thisLine " $LAmatiP"
+    append thisLine " $EisoAmati"
+    append thisLine " $EisoAmatiM"
+    append thisLine " $EisoAmatiP"
+    
+    #fluxes
+    foreach flux $fluxes {
+      set ciaps [lindex $flux 1]
+      append ciaps " "
+      append ciaps [lindex $flux 2]
+      append ciaps " "
+      append ciaps [lindex $flux 3]
+      append thisLine " $ciaps"
+    }
+    #fluences
+    foreach fluence $fluences {
+      set ciaps [lindex $fluence 1]
+      append ciaps " "
+      append ciaps [lindex $fluence 2]
+      append ciaps " "
+      append ciaps [lindex $fluence 3]
+      append thisLine " $ciaps"
+    }
+    
+    #Components fluxes
+    for {set thisLid 0} {$thisLid<=[expr [llength $compFluxes]-1]} {incr thisLid} {
+       set thisList [lindex $compFluxes $thisLid]
+       set thisFlux [lindex $thisList 1]
+       set ciaps [join $thisFlux " "]
+       append thisLine " $ciaps"
+    }
+    
+    #Components L and Eiso columns
+    for {set thisCid 0} {$thisCid<=[expr [llength $compL]-1]} {incr thisCid} {
+      
+      set thisCL [lindex $compL $thisCid]
+      set ciaps [join $thisCL " "]
+      append thisLine " $ciaps"
+      
+      set thisCEiso [lindex $compEiso $thisCid]
+      set ciaps [join $thisCEiso " "]
+      append thisLine " $ciaps"
+      
+      set thisCL [lindex $compLAmati $thisCid]
+      set ciaps [join $thisCL " "]
+      append thisLine " $ciaps"
+      
+      set thisCEiso [lindex $compEisoAmati $thisCid]
+      set ciaps [join $thisCEiso " "]
+      append thisLine " $ciaps"  
+    }
+    #Parameters
+    foreach par $parameters {
+      set ciaps [lindex $par 1]
+      append ciaps " "
+      append ciaps [lindex $par 2]
+      append ciaps " "
+      append ciaps [lindex $par 3]
+      append thisLine " $ciaps"
+    }
+    #Error mask
+    set errorMask ""
+    foreach par $parameters {
+      set thisMask [lindex $par 5]
+      set errorMask "${errorMask}${thisMask}"
+    }
+    append thisLine " $errorMask"
+    #puts $thisLine
+    puts $fileid $thisLine
+    close $fileid
+    
+    #Now create/append the FITS file
+    set FITSfileexists [file exists $FITSfile]
+    
+    if { $FITSfileexists == 1 } {
+
+        set tmpfile $FITSfile
+        append tmpfile "-tmp"
+        #puts "fcreate cdfile=$cdfile datafile=$txtfile outfile=$tmpfile clobber=yes"
+        fcreate cdfile=$cdfile datafile=$txtfile outfile=$tmpfile clobber=yes        
+               
+        set listfile $FITSfile
+        append listfile "-list"
+        set fileid [open $listfile w]
+        puts $fileid "$FITSfile"
+        puts $fileid "$tmpfile"
+        close $fileid
+        tclflush stdout
+               
+        file delete _collist
+        cat $cdfile \| cut -f1 -d' ' > _collist
+        
+        set tmpfile2 $FITSfile
+        append tmpfile2 "-tmp2"
+        #puts "fmerge columns='@_collist' infiles=@${listfile} outfile=$tmpfile2 clobber=yes"
+        fmerge columns="@_collist" infiles="@${listfile}" outfile="$tmpfile2" clobber=yes
+
+        mv $tmpfile2 $FITSfile
+        file delete $tmpfile
+        file delete $listfile
+        file delete _collist
+    } else {
+        #puts "fcreate cdfile=$cdfile datafile=$txtfile outfile=$FITSfile clobber=yes"
+        fcreate cdfile=$cdfile datafile=$txtfile outfile=$FITSfile clobber=yes
+    }
+    
+    # tidy up the temporary files
+    
+    file delete $cdfile 
+    file delete $txtfile
+    
+    chatter $oldChatter
+  } else {
+    puts "No data loaded or no model defined: impossible to write results"
+  }
+}

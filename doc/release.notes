@@ -1,0 +1,61 @@
+/** 
+  @file release.notes
+  @brief package GtGRB
+
+  @verbatim
+  $Id: release.notes,v 1.51 2014/08/27 18:23:33 omodei Exp $
+  EOH
+
+ GtGRB-01-13-03 27-Aug-2014 omodei Automatic Tagging of GRBAnalysis packages
+ GtGRB-01-13-02 16-Dec-2013 omodei Automatic Tagging of GRBAnalysis packages
+ GtGRB-01-13-01 12-Dec-2012 omodei Automatic Tagging of GRBAnalysis packages
+ GtGRB-01-13-00 27-Nov-2012 omodei Automatic Tagging of GRBAnalysis packages
+ GtGRB-01-12-02 03-Jul-2012 omodei Automatic Tagging of GRBAnalysis packages
+ GtGRB-01-12-01 03-Jul-2012 omodei Automatic Tagging of GRBAnalysis packages
+ GtGRB-01-12-00 02-Jul-2012 omodei Automatic Tagging of GRBAnalysis packages
+ GtGRB-01-11-01 10-May-2012 omodei Automatic Tagging of GRBAnalysis packages
+ GtGRB-01-11-00 09-May-2012 omodei Automatic Tagging of GRBAnalysis packages
+ GtGRB-01-10-03 02-May-2012 bregeon handle new LLE file format - 3
+ GtGRB-01-10-02 02-May-2012 bregeon handle new LLE file format - 2
+ GtGRB-01-10-02 02-May-2012 bregeon handle new LLE file format
+ GtGRB-01-10-01 28-Apr-2012 bregeon new interface to submit bjos to the batch farm
+ GtGRB-01-10-00 17-Apr-2012 omodei Automatic Tagging of GRBAnalysis packages
+ GtGRB-01-09-01 23-Feb-2012 giacomov Several small changes in the Autofit feature
+ GtGRB-01-09-00 02-Feb-2012 omodei Added few new funtionality,version for the catalog
+ GtGRB-01-08-01 07-Nov-2011 omodei Split the plot of the temporal extended emisson
+ GtGRB-01-08-00 04-Nov-2011 giacomov Corrected a bug in MakeGBMLightCurves, which was ignoring the detlist parameter
+ GtGRB-01-07-00 04-Nov-2011 giacomov Added the computation of luminosity and Eiso for GRB with redshift (in Autofit)
+ GtGRB-01-06-09 14-Oct-2011 giacomov Added the SelectGBMTimeInterval method to select interactively time intervals in GBM light curves
+ GtGRB-01-06-08 04-Oct-2011 omodei Small fix
+ GtGRB-01-06-07 03-Oct-2011 omodei Bug fixed
+ GtGRB-01-06-06 03-Oct-2011 giacomov corrected a small problem with the initial fit
+ GtGRB-01-06-05 29-Sep-2011 omodei Bug Fix handling new xml mode. Save LLE outputfiles
+ GtGRB-01-06-04 28-Sep-2011 giacomov Changed initial values for some parameters in the Autofit models
+ GtGRB-01-06-03 27-Sep-2011 giacomov Improved convergence for the autofit and corrected a typo
+ GtGRB-01-06-02 27-Sep-2011 giacomov Improved convergence for the autofit
+ GtGRB-01-06-01 27-Sep-2011 omodei Added a better interface to remove unnecessary files, modified a tabkle for the catalog
+ GtGRB-01-06-00 26-Sep-2011 giacomov Added MakeLLESpectra
+ GtGRB-01-05-00 14-Sep-2011 vlasisva pre-bkge_p7
+ GtGRB-01-04-02 07-Sep-2011 giacomov Solved a small problem with the plots of autofit
+ GtGRB-01-04-01 07-Sep-2011 omodei Added the possibility to get the Sun position
+ GtGRB-01-04-00 02-Sep-2011 bregeon bug fix for LLE cut handling in CompositeLightCurve, doc
+ GtGRB-01-03-00 01-Sep-2011 giacomov Added the residual plot to Autofit
+ GtGRB-01-02-00 01-Sep-2011 giacomov Added MakeLLEProducts()
+ GtGRB-01-01-01 30-Aug-2011 giacomov Slightly modify in the production of lookup tables
+ GtGRB-01-01-00 29-Aug-2011 giacomov Update Autofit: added the configuration capability, to let the user change statistic and channels to fit for each known detector
+ GtGRB-01-00-09 28-Aug-2011 omodei Minor bug fix
+ GtGRB-01-00-08 28-Aug-2011 omodei changed the module submitting the jobTo the pipeline to use correct BASEDIR value
+ GtGRB-01-00-08 28-Aug-2011 omodei changed the module submitting the jobTo the pipeline to use correct BASEDIR value
+ GtGRB-01-00-07 27-Aug-2011 omodei Added median calculation. Bug Fix in gtgrb. Added LATBA_P6 flavor for Dan tool
+ GtGRB-01-00-06 26-Aug-2011 bregeon Add Doxygen doc
+ GtGRB-01-00-05 24-Aug-2011 omodei Fixed an include
+ GtGRB-01-00-04 23-Aug-2011 giacomov Autofit: added the capability to select which models use for the fit
+ GtGRB-01-00-03 22-Aug-2011 omodei Added the built of a library
+ GtGRB-01-00-02 21-Aug-2011 omodei Bug fix, an import was misplaced
+ GtGRB-01-00-01 19-Aug-2011 omodei Changed some permission and added the possibility to add a panel in te CLC
+ GtGRB-01-00-00 19-Aug-2011 omodei first candidate release
+ GtGRB-00-01-02 29-Jun-2011    jrb 1. Use Vlasi interface for gt_EventProb. 2. adjust for new gtsrcprob [for Nicola O.]
+ GtGRB-00-01-01 13-Jun-2011    jrb first tag for GtGRB in its new home
+ 
+  @endverbatim
+*/

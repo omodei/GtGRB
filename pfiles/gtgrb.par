@@ -1,0 +1,99 @@
+#
+# $Header: 
+# parameters common to gtgrb analysis
+# 
+GRBTRIGGERDATE,s,a,"",,,"Enter the GRBTRIGGERDATE (MET or YYYY-MM-DD HH:MM:SS):"
+RA,r,a,,,,"RA:"
+DEC,r,a,,,,"DEC:"
+ROI,r,a,12,,,"Radius of the Region of Interest (deg):"
+REDSHIFT,r,a,,,,"Enter the redshift if known (otherwise 0.0):"
+GRBT05,r,a,,,,"Enter the GRB T05 with respect the trigget time (s):"
+GRBT90,r,a,,,,"Enter the GRB T90 with respect the trigget time (s):"
+
+TSTART,r,h,-20,,,"Enter the TSTART with respect the trigget time (s):"
+TSTOP,r,h,300,,,"Enter the TSTOP  with respect the END of the burst (s):"
+EMIN,r,a,100,,,"Enter the Minimum Energy (MeV):"
+EMAX,r,a,100000,,,"Enter the Maximum Energy (MeV):"
+EBINS,i,a,10,,,"Enter the Number of Log bins:"
+FEMIN,r,h,100,,,"Minimum Energy (MeV) for computing fluxes and ULs:"
+FEMAX,r,h,10000,,,"Maximum Energy (MeV) for computing fluxes and ULs:"
+
+IRFS,s,a,"P7TRANSIENT_V6",,,"Enter the IRF:"
+FT1,f,a,"",,,"FT1 file (or look in $INDIR if empty):"
+FT2,f,a,"",,,"FT2 file (or look in $INDIR if empty):"
+ZMAX,r,a,105,,,"Enter the Maximum Z Angle (deg):"
+DT,r,a,1,,,"Enter the time bin width (sec):"
+ERR,r,a,1.17,,,"Enter the Localization Error at 1-sigma (deg):"	
+BINSZ,r,a,0.1,,,"SKY MAP Bin size (degrees):"
+
+
+#
+# PLOT ANGULAR SEPARATION
+#
+
+PLOTANGULARSEPARATION,i,a,1,,,"Plot the angular separation? (1|0)"
+BEFORE,r,a,200,,,"Seconds before the trigger:"
+AFTER,r,a,3600,,,"Seconds after the trigger:"
+
+#
+# Select the data:
+#
+
+MAKESELECT,i,a,1,,,"Select the Data? (1|0):"
+MAKE_ENERGYDEPENDENTROI,i,a,1,,,"Make an Energy Dependent ROI selection? (1|0):"
+MAKE_RSPGEN,i,a,1,,,"Make RSPGEN and PHA2 files? (1|0):"
+SEPARATE_FB,i,h,0,,,"Separate Front and Back (1|0):
+UPDATE_POS,i,h,1,,,"Update Position with gtfindsrc (1|0)"
+
+#
+# GENERATE THE GBM AND LAT SPECTRUM FILE FOR XSPEC AND RMFIT:
+#
+
+MAKE_GBM_XSPECTUM,i,a,1,,,"Generate GBM Spectrum files (1|0)"
+MAKE_LAT_XSPECTRUM,i,a,1,,,"Generate LAT Spectrum files (1|0)"
+MAKE_BKGE_XSPECTRUM,i,a,1,,,"Generate LAT Backgroiund file using the BKGE (1|0)"
+
+#
+# GBM LIGHT CURVE
+#
+
+DETLIST,s,a,"All",,,"GBM Detector List (All, Trig, or comma separated det. names): "
+NAIANGLE,r,h,50,,,"Maximum angle between the GRB and the NaI detector for using the detector in the analysis."
+
+#
+# LLE LIGHT CURVE
+#
+
+MAKELLE,i,a,1,,,"Make LLE LightCurves? (1|0):"
+COMPOSITELC,i,a,1,,,"Make Composite Light Curve? (1|0)"
+REMAKE_COMPOSITELC,i,a,1,,,"Regenerate all the necessary file for making the Composite Light Curve? (1|0)"
+
+#
+# BACKGROUND ESTIMATOR - DURATION CALCULATION
+#
+
+CALCULATELATT90,i,a,1,,,"Use BKGE to compute the LAT duration? 1|0"
+WEIGHBYEXPOSURE,i,h,0,,,"Weight background by the exposure? 1|0"
+CROSSGTIS,i,h,1,,,"Continue the BKGE in the next GTI? 1|0"
+
+#
+# LIKELIHOOD ANALYSIS 
+#
+
+TSMIN, r,h,20,,,"Minimum TS:"
+TSMIN_EXT, r,h,10,,,"Minimum TS for extended emission:"
+MAKE_LIKE,i,a,1,,,"Fitting the spectrum using Likelihood analysis ? (1|0)"
+PREBURST,r,a,86000,,,"Seconds before the trigger to compute the preburst background:"
+like_model,s,a,"GRB+GAL0+BKGE_CR_EGAL",,,"LIKELIHOOD model: GRB|+ISO|+GAL|+TEM|+SRC(ra,dec)|+BKGE_CR_EGAL|GRB+PREFIT:"
+like_timeBins,s,a,"LOG,0.01,10000,50",,,"Compute the likelihood in different time bins: AUTO,N,Tm,TM,idx | CONSTANT_FLUENCE,Tm,TM,fl(1e-2) | CONSTANT_TS,Tm,TM | LOG,Tm,TM,N | LIN,Tm,TM,N | b1,b2,...: "
+TSMAP,i,a,1,,,"Compute TSMAP with the current background model (1|0):"
+
+#	
+# STANDARD GTAPP PRAMETERS
+#
+
+chatter,i,h,2,0,4,Output verbosity
+clobber,        b, h, yes, , , "Overwrite existing output files"
+debug,          b, h, no, , , "Activate debugging mode"
+gui,            b, h, no, , , "GUI mode activated"
+mode,           s, h, "ql", , , "Mode of automatic parameters"
